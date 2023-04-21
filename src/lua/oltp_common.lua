@@ -90,7 +90,10 @@ sysbench.cmdline.options = {
    without_data =
       {"Whether not insert data when preparing", false},
    access_table_ratio =
-      {"Ratio of the whole table to access. Test hotspot data access", 1}
+      {"Ratio of the whole table to access. Test hotspot data access", 1},
+   column_num =
+      {"Number of columns in the table. Repeat the definition of columns(k, c, pad) " ..
+          "to expand the number of columns", 4}
 }
 
 -- Prepare the dataset. This command supports parallel execution, i.e. will
@@ -153,10 +156,12 @@ local c_value_template = "###########-###########-###########-" ..
    "###########-###########-###########-" ..
    "###########-###########-###########-" ..
    "###########"
+local short_c_value_template = "########-######"
 
 -- 5 groups, 59 characters
 local pad_value_template = "###########-###########-###########-" ..
    "###########-###########"
+local short_pad_value_template = "########"
 
 function get_c_value()
    return sysbench.rand.string(c_value_template)
@@ -225,15 +230,27 @@ function create_table(drv, con, table_num)
 
    print(string.format("Creating table 'sbtest%d'...", table_num))
 
+-- Column number minus 1 for id
+   local col_repeat_times = math.floor((sysbench.opt.column_num - 1) / 3)
+   local repeat_col_def = ""
+   for i = 1, col_repeat_times - 1 do
+      repeat_col_def = repeat_col_def .. string.format([[
+  k%d INTEGER DEFAULT '0' NOT NULL,
+  c%d CHAR(15) DEFAULT '' NOT NULL,
+  pad%d CHAR(8) DEFAULT '' NOT NULL,]],
+      i, i, i)
+   end
+
    query = string.format([[
 CREATE TABLE sbtest%d(
   id %s,
   k INTEGER DEFAULT '0' NOT NULL,
   c CHAR(120) DEFAULT '' NOT NULL,
   pad CHAR(60) DEFAULT '' NOT NULL,
+  %s
   %s (id)
 ) %s %s %s]],
-      table_num, id_def, id_index_def, engine_def,
+      table_num, id_def, repeat_col_def, id_index_def, engine_def,
       sysbench.opt.create_table_options, partition_def)
 
    print(query)
@@ -255,31 +272,47 @@ CREATE TABLE sbtest%d(
                           sysbench.opt.table_size, table_num))
    end
 
+   local repeat_col_list = ""
+   for i = 1, col_repeat_times - 1 do
+       repeat_col_list = repeat_col_list .. string.format(", k%d, c%d, pad%d", i, i, i)
+   end
+
    if sysbench.opt.auto_inc then
-      query = "INSERT INTO sbtest" .. table_num .. "(k, c, pad) VALUES"
+      query = "INSERT INTO sbtest" .. table_num .. string.format("(k, c, pad%s) VALUES", repeat_col_list)
    else
-      query = "INSERT INTO sbtest" .. table_num .. "(id, k, c, pad) VALUES"
+      query = "INSERT INTO sbtest" .. table_num .. string.format("(id, k, c, pad%s) VALUES", repeat_col_list)
    end
 
    con:bulk_insert_init(query)
 
    local c_val
    local pad_val
+   local k_val
+   local short_c_val
+   local short_pad_val
 
    for i = 1, sysbench.opt.table_size do
 
       c_val = get_c_value()
       pad_val = get_pad_value()
+      k_val = sysbench.rand.default(1, sysbench.opt.table_size)
+
+      if col_repeat_times > 1 then
+         short_c_val = sysbench.rand.string(short_c_value_template)
+         short_pad_val = sysbench.rand.string(short_pad_value_template)
+      end
+
+      local repeat_col_val_list = ""
+      for i = 1, col_repeat_times - 1 do
+          repeat_col_val_list = repeat_col_val_list .. string.format(", %d, '%s', '%s'", k_val, short_c_val, short_pad_val)
+      end
 
       if (sysbench.opt.auto_inc) then
-         query = string.format("(%d, '%s', '%s')",
-                               sysbench.rand.default(1, sysbench.opt.table_size),
-                               c_val, pad_val)
+         query = string.format("(%d, '%s', '%s'%s)",
+                               k_val, c_val, pad_val, repeat_col_val_list)
       else
-         query = string.format("(%d, %d, '%s', '%s')",
-                               i,
-                               sysbench.rand.default(1, sysbench.opt.table_size),
-                               c_val, pad_val)
+         query = string.format("(%d, %d, '%s', '%s'%s)",
+                               i, k_val, c_val, pad_val, repeat_col_val_list)
       end
 
       con:bulk_insert_next(query)

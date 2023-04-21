@@ -148,3 +148,10 @@ plt.ylabel("qps")
 
 plt.legend(bbox_to_anchor=(1.05, 0), loc=3, borderaxespad=0)
 plt.savefig('/tmp/test.png', dpi=600, bbox_inches='tight')
+
+# Example: Use log scale, but display the original values in x-axis
+'''
+xticks = np.log2(table_sizes)
+plt.xticks(xticks, labels=table_sizes)
+plt.plot(xticks, qps["oltp_write_only.lua"])
+'''
